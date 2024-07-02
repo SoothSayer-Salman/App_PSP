@@ -1,6 +1,6 @@
-streamlit
-pandas 
-numpy 
-scipy.optimize 
 joblib
-plotly.graph_objects 
+numpy
+pandas
+plotly
+scipy
+streamlit
