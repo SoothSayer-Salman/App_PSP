@@ -5,4 +5,5 @@ plotly
 scipy
 streamlit
 scikit-learn
-tensorflow
+tensorflow ==2.16.1
+tensorflow-io-gcs-filesystem ==0.37.0
