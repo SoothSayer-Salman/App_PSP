@@ -165,9 +165,10 @@ def main():
         
         # Convert results to a DataFrame
         results_df = pd.DataFrame(results_list)
-        st.write("Results from user input:")
-        st.write(results_df)
-
+        st.write("Optimal Penetration and DMRate:")
+        results_df = results_df.applymap(lambda x: x[0] if isinstance(x, list) else x)
+        st.write(results_df.iloc[[0]])
+        
         x1_list, linpreds_list, svrpreds_list = [], [], []
         for i in range(df.shape[0]):
             # Extract the row as a DataFrame and reset the index
