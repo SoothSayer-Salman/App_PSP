@@ -4,14 +4,49 @@ import numpy as np
 import scipy.optimize as sco
 import joblib
 import plotly.graph_objects as go
+import pickle
+from sklearn.base import BaseEstimator, RegressorMixin
+from tensorflow.keras.models import load_model
+
+class KerasRegressorWrapper(BaseEstimator, RegressorMixin):
+    def __init__(self, model):
+        self.model = model
+
+    def fit(self, X, y, **kwargs):
+        self.model.fit(X, y, **kwargs)
+        return self
+
+    def predict(self, X, **kwargs):
+        predictions = self.model.predict(X, **kwargs)
+        if predictions.ndim > 1:
+            predictions = predictions.flatten()
+        return predictions
+
+    def score(self, X, y):
+        from sklearn.metrics import r2_score
+        return r2_score(y, self.predict(X))
+    
+
+with open('voting_ensemble_2.pkl', 'rb') as f:
+    model_svr = pickle.load(f)
+
+keras_model = load_model('final_model_1.h5')
+keras_wrapper = KerasRegressorWrapper(keras_model)
+
+for idx, (name, model) in enumerate(model_svr.estimators):
+    if name == 'keras':
+        model_svr.estimators[idx] = ('keras', keras_wrapper)
+
 
 # Load the saved models and scalers
-model_LR = joblib.load('LR_MODEL.pkl')
-model_svr = joblib.load('SVR_MODEL.pkl')
-LR_scalerx = joblib.load('LR_scalerx.pkl')
-LR_scalery = joblib.load('LR_scalery.pkl')
-svr_scalerx = joblib.load('SVR_scalerx.pkl')
-svr_scalery = joblib.load('SVR_scalery.pkl')
+model_LR = joblib.load('model_LR.pkl')
+# model_svr = joblib.load('voting_ensemble_2.pkl')
+
+
+LR_scalerx = joblib.load('scalarx_linear.pkl')
+LR_scalery = joblib.load('scalary_linear.pkl')
+svr_scalerx = joblib.load('scalarx.pkl')
+svr_scalery = joblib.load('scalary.pkl')
 
 # Define the mean absolute percentage error function
 def mean_absolute_percentage_error(y_true, y_pred):
@@ -19,21 +54,27 @@ def mean_absolute_percentage_error(y_true, y_pred):
 
 # Function to calculate profit and predictions
 def ProfitFunc(df):
-    df_svm = df[['Penetration', 'DMRate', 'GMRate', 'EconomicIndicator', 'Christmas', 'SeasonalIndicator']]
+    df_svm = df[['Penetration', 'SeasonalIndicator_ts','DMRate', 'GMRate', 'EconomicIndicator', 'Christmas']]
     df_svm_scaled = svr_scalerx.transform(df_svm)
     svrpred = model_svr.predict(df_svm_scaled)
-    svrpreds = svr_scalery.inverse_transform(pd.DataFrame(svrpred)).flatten()  # Rescale SVR predictions
-
-    df_linear = df[['EconomicIndicator', 'Christmas', 'SeasonalIndicator']]
+    svrpreds = svr_scalery.inverse_transform(svrpred.reshape(-1, 1)).flatten()
+    
+    df_linear = df[['EconomicIndicator', 'SeasonalIndicator_ts', 'Christmas']]
     df_linear_scaled = LR_scalerx.transform(df_linear)
     linpred = model_LR.predict(df_linear_scaled)
     linpreds = LR_scalery.inverse_transform(linpred.reshape(-1, 1)).flatten() 
 
     EstimatedRevenue = linpreds + svrpreds
+
+    # EstimatedRevenue = svrpreds
+
     df['TotDisc'] = EstimatedRevenue * df['Penetration']
     x1 = (EstimatedRevenue + df['TotDisc']) * df['GMRate'] - df['TotDisc']
 
-    return -x1, linpreds.tolist(), svrpreds.tolist()
+    # return -x1, svrpreds.tolist()
+    return x1, linpreds.tolist(), svrpreds.tolist()
+
+# ['Penetration', 'SeasonalIndicator_ts','DMRate', 'GMRate', 'EconomicIndicator', 'Christmas']
 
 
 # Function to calculate profit and predictions
@@ -41,12 +82,12 @@ def ProfitFunc_all(X, df):
     df['Penetration'] = X[0]
     df['DMRate'] = X[1]
     
-    df_svm = df[['Penetration', 'DMRate', 'GMRate', 'EconomicIndicator', 'Christmas', 'SeasonalIndicator']]
+    df_svm = df[['Penetration', 'SeasonalIndicator_ts','DMRate', 'GMRate', 'EconomicIndicator', 'Christmas']]
     df_svm_scaled = svr_scalerx.transform(df_svm)
     svrpred = model_svr.predict(df_svm_scaled)
     svrpreds = svr_scalery.inverse_transform(svrpred.reshape(-1, 1)).flatten()
     
-    df_linear = df[['EconomicIndicator', 'Christmas', 'SeasonalIndicator']]
+    df_linear = df[['EconomicIndicator', 'SeasonalIndicator_ts', 'Christmas']]
     df_linear_scaled = LR_scalerx.transform(df_linear)
     linpred = model_LR.predict(df_linear_scaled)
     linpreds = LR_scalery.inverse_transform(linpred.reshape(-1, 1)).flatten() 
@@ -77,7 +118,7 @@ def findMaxima(data):
             "Penetration": res.x[0],
             "DMRate": res.x[1],
             "LR_prediction": linpreds,
-            "SVR_prediction": svrpreds,
+            "Enesembling_prediction": svrpreds,
             "message": res.message
         }
     else:
@@ -86,13 +127,13 @@ def findMaxima(data):
             "message": res.message
         }
 
-
 # Streamlit app
 def main():
-    page_bg="""      
+    page_bg = """      
       <style>
         [data-testid="stAppViewContainer"]{
             background-color: #e5e5f7;
+            color: black;
            
         }
         .sidebar .sidebar-content {
@@ -120,7 +161,7 @@ def main():
         }
         </style>
         """
-    st.markdown(page_bg,unsafe_allow_html=True)
+    st.markdown(page_bg, unsafe_allow_html=True)
 
     st.title("Discount Optimization")
     
@@ -138,7 +179,7 @@ def main():
             gm_rate = st.number_input("GM Rate", min_value=0.0, step=0.01)
             economic_indicator = st.number_input("Economic Indicator", min_value=0.0, step=0.01)
             christmas = st.number_input("Christmas", min_value=0.0, max_value=1.0, step=0.01)
-            seasonal_indicator = st.number_input("Seasonal Indicator", min_value=0.0, max_value=1.0, step=0.01)
+            seasonal_indicator = st.number_input("Seasonal Indicator", min_value=0.0, step=0.01)
         
         submit_button = st.form_submit_button("Submit")
     
@@ -153,11 +194,31 @@ def main():
         A['key'] = 1
         B['key'] = 1
         df = pd.merge(A, B).drop('key', axis=1)
-        df['SeasonalIndicator'] = seasonal_indicator
+        df['SeasonalIndicator_ts'] = seasonal_indicator
         df['Christmas'] = christmas
-        df['EconomicIndicator'] = economic_indicator
         df['GMRate'] = gm_rate
-# Calculate results for each combination
+        df['EconomicIndicator'] = economic_indicator
+        
+        # Calculate results for each combination
+        x1_list, linpreds_list,svrpreds_list = [], [], []
+        for i in range(df.shape[0]):
+            # Extract the row as a DataFrame and reset the index
+            row = df.iloc[[i]].reset_index(drop=True)
+            x1, linpreds ,svrpreds= ProfitFunc(row.copy())
+            x1_list.append(x1[0])  # Append the first element of x1
+            linpreds_list.append(linpreds[0])
+            svrpreds_list.append(svrpreds[0])
+
+        # After the loop, assign lists to DataFrame columns
+        df['Profit'] = x1_list
+        df['LR_prediction'] = linpreds_list
+        df['Enesembling_prediction']=svrpreds_list
+
+
+        # Display table with all combinations
+        st.write("Table showing all combinations with predictions and profit:")
+        st.write(df)
+
         results_list = []
         for i in range(df.shape[0]):
             result = findMaxima(df.iloc[i:i+1].copy())
@@ -168,24 +229,7 @@ def main():
         st.write("Optimal Penetration and DMRate:")
         results_df = results_df.applymap(lambda x: x[0] if isinstance(x, list) else x)
         st.write(results_df.iloc[[0]])
-        
-        x1_list, linpreds_list, svrpreds_list = [], [], []
-        for i in range(df.shape[0]):
-            # Extract the row as a DataFrame and reset the index
-            row = df.iloc[[i]].reset_index(drop=True)
-            x1, linpreds, svrpreds = ProfitFunc(row.copy())
-            x1_list.append(x1[0])  # Append the first element of x1
-            linpreds_list.append(linpreds[0])
-            svrpreds_list.append(svrpreds[0])
 
-        # After the loop, assign lists to DataFrame columns
-        df['x1'] = x1_list
-        df['LR_prediction'] = linpreds_list
-        df['SVR_prediction'] = svrpreds_list
-
-        # Display table with all combinations
-        st.write("Table showing all combinations with predictions and profit:")
-        st.write(df)
 
         # Option to download the results as CSV
         csv_user_input = df.to_csv(index=False).encode('utf-8')
@@ -196,15 +240,14 @@ def main():
             mime='text/csv',
         )
 
-        # Plotting the data
         fig = go.Figure(data=[go.Scatter3d(
             x=df['Penetration'],
             y=df['DMRate'],
-            z=df['x1'],
+            z=df['Profit'],
             mode='markers',
             marker=dict(
                 size=5,
-                color=df['x1'],                # set color to the profit
+                color=df['Profit'],                # set color to the profit
                 colorscale='Viridis',   # choose a colorscale
                 opacity=0.8
             )
@@ -221,6 +264,7 @@ def main():
 
         st.plotly_chart(fig)
 
-
 if __name__ == "__main__":
     main()
+
+
