@@ -216,6 +216,7 @@ def main():
             # Convert results to a DataFrame
             results_df = pd.DataFrame(results_list)
             st.write("Optimal Penetration and DMRate:")
+            st.write(result_df)
             results_df = results_df.applymap(lambda x: x[0] if isinstance(x, list) else x)
             st.write(results_df.iloc[[0]])
             optimal_point = results_df.iloc[0]
