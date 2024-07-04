@@ -25,7 +25,6 @@ class KerasRegressorWrapper(BaseEstimator, RegressorMixin):
     def score(self, X, y):
         from sklearn.metrics import r2_score
         return r2_score(y, self.predict(X))
-    
 
 with open('voting_ensemble_2.pkl', 'rb') as f:
     model_svr = pickle.load(f)
@@ -37,24 +36,16 @@ for idx, (name, model) in enumerate(model_svr.estimators):
     if name == 'keras':
         model_svr.estimators[idx] = ('keras', keras_wrapper)
 
-
 # Load the saved models and scalers
 model_LR = joblib.load('model_LR.pkl')
-# model_svr = joblib.load('voting_ensemble_2.pkl')
-
-
 LR_scalerx = joblib.load('scalarx_linear.pkl')
 LR_scalery = joblib.load('scalary_linear.pkl')
 svr_scalerx = joblib.load('scalarx.pkl')
 svr_scalery = joblib.load('scalary.pkl')
 
-# Define the mean absolute percentage error function
-def mean_absolute_percentage_error(y_true, y_pred):
-    return np.mean(np.abs((y_true - y_pred) / y_true)) * 100
-
 # Function to calculate profit and predictions
 def ProfitFunc(df):
-    df_svm = df[['Penetration', 'SeasonalIndicator_ts','DMRate', 'GMRate', 'EconomicIndicator', 'Christmas']]
+    df_svm = df[['Penetration', 'SeasonalIndicator_ts', 'DMRate', 'GMRate', 'EconomicIndicator', 'Christmas']]
     df_svm_scaled = svr_scalerx.transform(df_svm)
     svrpred = model_svr.predict(df_svm_scaled)
     svrpreds = svr_scalery.inverse_transform(svrpred.reshape(-1, 1)).flatten()
@@ -65,24 +56,17 @@ def ProfitFunc(df):
     linpreds = LR_scalery.inverse_transform(linpred.reshape(-1, 1)).flatten() 
 
     EstimatedRevenue = linpreds + svrpreds
-
-    # EstimatedRevenue = svrpreds
-
     df['TotDisc'] = EstimatedRevenue * df['Penetration']
     x1 = (EstimatedRevenue + df['TotDisc']) * df['GMRate'] - df['TotDisc']
 
-    # return -x1, svrpreds.tolist()
     return x1, linpreds.tolist(), svrpreds.tolist()
 
-# ['Penetration', 'SeasonalIndicator_ts','DMRate', 'GMRate', 'EconomicIndicator', 'Christmas']
-
-
-# Function to calculate profit and predictions
+# Function to calculate profit and predictions for all combinations
 def ProfitFunc_all(X, df):
     df['Penetration'] = X[0]
     df['DMRate'] = X[1]
     
-    df_svm = df[['Penetration', 'SeasonalIndicator_ts','DMRate', 'GMRate', 'EconomicIndicator', 'Christmas']]
+    df_svm = df[['Penetration', 'SeasonalIndicator_ts', 'DMRate', 'GMRate', 'EconomicIndicator', 'Christmas']]
     df_svm_scaled = svr_scalerx.transform(df_svm)
     svrpred = model_svr.predict(df_svm_scaled)
     svrpreds = svr_scalery.inverse_transform(svrpred.reshape(-1, 1)).flatten()
@@ -98,13 +82,12 @@ def ProfitFunc_all(X, df):
     
     return -x1, linpreds, svrpreds
 
-
 # Function to find maxima
-def findMaxima(data):
-    guess = [0.01, 0.1]  # Initial guess for Penetration and DMRate
+def findMaxima(data, penetration_min, penetration_max, dmrate_min, dmrate_max):
+    guess = [penetration_min, dmrate_min]  # Initial guess for Penetration and DMRate
     constraints = ()
     args = (data,)
-    bounds = [(0.01, 0.3), (0.1, 0.35)]  # Bounds for Penetration and DMRate
+    bounds = [(penetration_min, penetration_max), (dmrate_min, dmrate_max)]
     
     res = sco.minimize(lambda X, *args: ProfitFunc_all(X, *args)[0], x0=guess, args=args, method='SLSQP', bounds=bounds, constraints=constraints)
     
@@ -114,11 +97,11 @@ def findMaxima(data):
         
         return {
             "Estimated_revenue": estimated_revenue,
-            "Estimated_Profit": -res.fun,
+            "Estimated_Profit": round(-res.fun, 2),
             "Penetration": res.x[0],
             "DMRate": res.x[1],
-            "LR_prediction": linpreds,
-            "Enesembling_prediction": svrpreds,
+            "LR_prediction": np.round(linpreds, 2),
+            "Enesembling_prediction": np.round(svrpreds, 2),
             "message": res.message
         }
     else:
@@ -133,8 +116,7 @@ def main():
       <style>
         [data-testid="stAppViewContainer"]{
             background-color: #e5e5f7;
-            color: black;
-           
+            color: black;           
         }
         .sidebar .sidebar-content {
             background: Black;
@@ -157,7 +139,6 @@ def main():
             padding: 20px;
             border-radius: 10px;
             label:#000000;
-
         }
         </style>
         """
@@ -184,87 +165,148 @@ def main():
         submit_button = st.form_submit_button("Submit")
     
     if submit_button:
-        # Generate Penetration and DMRate values
-        Penetration = np.arange(penetration_min, penetration_max, 0.005)
-        DMRate = np.arange(dmrate_min, dmrate_max, 0.005)
+        with st.spinner('Calculations in progress...'):
+            # Add a progress bar
+            progress_bar = st.progress(0)
 
-        # Create DataFrame for combinations
-        A = pd.DataFrame({'Penetration': Penetration})
-        B = pd.DataFrame({'DMRate': DMRate})
-        A['key'] = 1
-        B['key'] = 1
-        df = pd.merge(A, B).drop('key', axis=1)
-        df['SeasonalIndicator_ts'] = seasonal_indicator
-        df['Christmas'] = christmas
-        df['GMRate'] = gm_rate
-        df['EconomicIndicator'] = economic_indicator
-        
-        # Calculate results for each combination
-        x1_list, linpreds_list,svrpreds_list = [], [], []
-        for i in range(df.shape[0]):
-            # Extract the row as a DataFrame and reset the index
-            row = df.iloc[[i]].reset_index(drop=True)
-            x1, linpreds ,svrpreds= ProfitFunc(row.copy())
-            x1_list.append(x1[0])  # Append the first element of x1
-            linpreds_list.append(linpreds[0])
-            svrpreds_list.append(svrpreds[0])
+            # Adjust Penetration and DMRate values if min equals max
+            Penetration = np.array([penetration_min]) if penetration_min == penetration_max else np.arange(penetration_min, penetration_max, 0.005)
+            DMRate = np.array([dmrate_min]) if dmrate_min == dmrate_max else np.arange(dmrate_min, dmrate_max, 0.005)
 
-        # After the loop, assign lists to DataFrame columns
-        df['Profit'] = x1_list
-        df['LR_prediction'] = linpreds_list
-        df['Enesembling_prediction']=svrpreds_list
+            # Create DataFrame for combinations
+            A = pd.DataFrame({'Penetration': Penetration})
+            B = pd.DataFrame({'DMRate': DMRate})
+            A['key'] = 1
+            B['key'] = 1
+            df = pd.merge(A, B).drop('key', axis=1)
+            df['SeasonalIndicator_ts'] = seasonal_indicator
+            df['Christmas'] = christmas
+            df['GMRate'] = gm_rate
+            df['EconomicIndicator'] = economic_indicator
+            
+            # Calculate results for each combination
+            x1_list, linpreds_list, svrpreds_list = [], [], []
+            total = df.shape[0]
 
+            for i in range(df.shape[0]):
+                # Update progress bar
+                progress_bar.progress((i + 1) / total)
 
-        # Display table with all combinations
-        st.write("Table showing all combinations with predictions and profit:")
-        st.write(df)
+                # Extract the row as a DataFrame and reset the index
+                row = df.iloc[[i]].reset_index(drop=True)
+                x1, linpreds, svrpreds = ProfitFunc(row.copy())
+                x1_list.append(round(x1[0], 2))
+                linpreds_list.append(np.round(linpreds[0], 2))
+                svrpreds_list.append(np.round(svrpreds[0], 2))
 
-        results_list = []
-        for i in range(df.shape[0]):
-            result = findMaxima(df.iloc[i:i+1].copy())
-            results_list.append(result)
-        
-        # Convert results to a DataFrame
-        results_df = pd.DataFrame(results_list)
-        st.write("Optimal Penetration and DMRate:")
-        results_df = results_df.applymap(lambda x: x[0] if isinstance(x, list) else x)
-        st.write(results_df.iloc[[0]])
+            # After the loop, assign lists to DataFrame columns
+            df['Profit'] = x1_list
+            df['LR_prediction'] = linpreds_list
+            df['Enesembling_prediction'] = svrpreds_list
 
+            # Display table with all combinations
+            st.write("Table showing all combinations with predictions and profit:")
+            st.write(df)
 
-        # Option to download the results as CSV
-        csv_user_input = df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="Download results as CSV",
-            data=csv_user_input,
-            file_name='results_from_user_input.csv',
-            mime='text/csv',
-        )
+            results_list = []
+            for i in range(df.shape[0]):
+                result = findMaxima(df.iloc[i:i + 1].copy(), penetration_min, penetration_max, dmrate_min, dmrate_max)
+                results_list.append(result)
 
-        fig = go.Figure(data=[go.Scatter3d(
-            x=df['Penetration'],
-            y=df['DMRate'],
-            z=df['Profit'],
-            mode='markers',
-            marker=dict(
-                size=5,
-                color=df['Profit'],                # set color to the profit
-                colorscale='Viridis',   # choose a colorscale
-                opacity=0.8
+            # Convert results to a DataFrame
+            results_df = pd.DataFrame(results_list)
+            st.write("Optimal Penetration and DMRate:")
+            results_df = results_df.applymap(lambda x: x[0] if isinstance(x, list) else x)
+            st.write(results_df.iloc[[0]])
+            optimal_point = results_df.iloc[0]
+
+            # Option to download the results as CSV
+            csv_user_input = df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="Download results as CSV",
+                data=csv_user_input,
+                file_name='results_from_user_input.csv',
+                mime='text/csv',
             )
-        )])
 
-        fig.update_layout(
-            title='3D Plot of Estimated Profit vs Penetration and DMRate',
-            scene=dict(
-                xaxis_title='Penetration',
-                yaxis_title='DMRate',
-                zaxis_title='Estimated Profit'
-            )
-        )
+            if penetration_min == penetration_max or dmrate_min == dmrate_max:
+                # Plotting 2D plot between Estimated Profit and respective Penetration or DMRate
+                if penetration_min == penetration_max:
+                    fig = go.Figure(data=go.Scatter(
+                        x=df['DMRate'],
+                        y=df['Profit'],
+                        mode='markers',
+                        marker=dict(
+                            size=8,
+                            color=df['Profit'],
+                            colorscale='Viridis',
+                            opacity=0.8
+                        )
+                    ))
+                    fig.update_layout(
+                        title='2D Plot of Estimated Profit vs DMRate',
+                        xaxis_title='DMRate',
+                        yaxis_title='Estimated Profit'
+                    )
+                elif dmrate_min == dmrate_max:
+                    fig = go.Figure(data=go.Scatter(
+                        x=df['Penetration'],
+                        y=df['Profit'],
+                        mode='markers',
+                        marker=dict(
+                            size=8,
+                            color=df['Profit'],
+                            colorscale='Viridis',
+                            opacity=0.8
+                        )
+                    ))
+                    fig.update_layout(
+                        title='2D Plot of Estimated Profit vs Penetration',
+                        xaxis_title='Penetration',
+                        yaxis_title='Estimated Profit'
+                    )
 
-        st.plotly_chart(fig)
+                st.plotly_chart(fig)
+
+            else:
+                # Plotting 3D plot
+                fig = go.Figure(data=[go.Scatter3d(
+                    x=df['Penetration'],
+                    y=df['DMRate'],
+                    z=df['Profit'],
+                    mode='markers',
+                    marker=dict(
+                        size=5,
+                        color=df['Profit'],  # set color to the profit
+                        colorscale='Viridis',  # choose a colorscale
+                        opacity=0.8
+                    )
+                )])
+
+                # Add optimal point to the plot
+                fig.add_trace(go.Scatter3d(
+                    x=[optimal_point['Penetration']],
+                    y=[optimal_point['DMRate']],
+                    z=[optimal_point['Estimated_Profit']],
+                    mode='markers',
+                    marker=dict(
+                        size=10,
+                        color='red',
+                        symbol='diamond'
+                    ),
+                    name='Optimal Point'
+                ))
+
+                fig.update_layout(
+                    title='3D Plot of Estimated Profit vs Penetration and DMRate',
+                    scene=dict(
+                        xaxis_title='Penetration',
+                        yaxis_title='DMRate',
+                        zaxis_title='Estimated Profit'
+                    )
+                )
+
+                st.plotly_chart(fig)
 
 if __name__ == "__main__":
     main()
-
-
