@@ -109,7 +109,8 @@ def model_function_jac(X, df):
     return np.array([dfd_penetration, dfd_dmrate])
 
 def findMaxima(data, penetration_min, penetration_max, dmrate_min, dmrate_max):
-    guess = [(penetration_min + penetration_max) / 2, (dmrate_min + dmrate_max) / 2]  # Use mid-point as initial guess
+    # guess = [(penetration_min + penetration_max) / 2, (dmrate_min + dmrate_max) / 2]  # Use mid-point as initial guess
+    guess = [penetration_min , dmrate_min ]  # Use mid-point as initial guess
     
     constraints = ()
     args = (data,)
