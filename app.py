@@ -61,35 +61,74 @@ def ProfitFunc(df):
 
     return x1, linpreds.tolist(), svrpreds.tolist()
 
-# Function to calculate profit and predictions for all combinations
-def ProfitFunc_all(X, df):
-    df['Penetration'] = X[0]
-    df['DMRate'] = X[1]
+import numpy as np
+import pandas as pd
+import scipy.optimize as sco
+
+def ProfitFunc_all(X, data):
+    data_copy = data.copy()
+    data_copy['Penetration'] = X[0]
+    data_copy['DMRate'] = X[1]
     
-    df_svm = df[['Penetration', 'SeasonalIndicator_ts', 'DMRate', 'GMRate', 'EconomicIndicator', 'Christmas']]
+    df_svm = data_copy[['Penetration', 'SeasonalIndicator_ts', 'DMRate', 'GMRate', 'EconomicIndicator', 'Christmas']]
     df_svm_scaled = svr_scalerx.transform(df_svm)
     svrpred = model_svr.predict(df_svm_scaled)
     svrpreds = svr_scalery.inverse_transform(svrpred.reshape(-1, 1)).flatten()
     
-    df_linear = df[['EconomicIndicator', 'SeasonalIndicator_ts', 'Christmas']]
+    df_linear = data_copy[['EconomicIndicator', 'SeasonalIndicator_ts', 'Christmas']]
     df_linear_scaled = LR_scalerx.transform(df_linear)
     linpred = model_LR.predict(df_linear_scaled)
     linpreds = LR_scalery.inverse_transform(linpred.reshape(-1, 1)).flatten() 
 
     EstimatedRevenue = linpreds + svrpreds
-    df['TotDisc'] = EstimatedRevenue * df['Penetration']
-    x1 = (EstimatedRevenue + df['TotDisc']) * df['GMRate'] - df['TotDisc']
+    data_copy['TotDisc'] = EstimatedRevenue * data_copy['Penetration']
+    x1 = (EstimatedRevenue + data_copy['TotDisc']) * data_copy['GMRate'] - data_copy['TotDisc']
     
-    return -x1, linpreds, svrpreds
+    return -x1.sum(), linpreds, svrpreds
 
-# Function to find maxima
+# Jacobian function
+def model_function_jac(X, df):
+    penetration, dmrate = X
+    
+    # Initialize perturbation values
+    delta = 1e-5  # Slightly larger perturbation for numerical stability
+    
+    # Calculate profit at the current point
+    f0, _, _ = ProfitFunc_all(X, df)
+    
+    # Partial derivative with respect to Penetration
+    X1 = [penetration + delta, dmrate]
+    f1, _, _ = ProfitFunc_all(X1, df)
+    dfd_penetration = (f1 - f0) / delta
+    
+    # Partial derivative with respect to DMRate
+    X2 = [penetration, dmrate + delta]
+    f2, _, _ = ProfitFunc_all(X2, df)
+    dfd_dmrate = (f2 - f0) / delta
+    
+    return np.array([dfd_penetration, dfd_dmrate])
+
 def findMaxima(data, penetration_min, penetration_max, dmrate_min, dmrate_max):
-    guess = [penetration_min, dmrate_min]  # Initial guess for Penetration and DMRate
+    guess = [(penetration_min + penetration_max) / 2, (dmrate_min + dmrate_max) / 2]  # Use mid-point as initial guess
+    
     constraints = ()
     args = (data,)
     bounds = [(penetration_min, penetration_max), (dmrate_min, dmrate_max)]
     
-    res = sco.minimize(lambda X, *args: ProfitFunc_all(X, *args)[0], x0=guess, args=args, method='SLSQP', bounds=bounds, constraints=constraints)
+    # Define a function to print optimization progress
+    def print_optimization_progress(xk):
+        objective_value, linpreds, svrpreds = ProfitFunc_all(xk, data)
+        estimated_revenue = linpreds + svrpreds
+        print(f"Iteration: {print_optimization_progress.iteration}, Objective: {objective_value}, Penetration: {xk[0]}, DMRate: {xk[1]}")
+        print_optimization_progress.iteration += 1
+    
+    # Initialize iteration count attribute
+    print_optimization_progress.iteration = 0
+    
+    # Optimization method parameters
+    options = {'disp': True, 'maxiter': 100, 'ftol': 1e-6}  # Example options, adjust as needed
+    
+    res = sco.minimize(lambda X, *args: ProfitFunc_all(X, *args)[0], x0=guess, args=args, method='SLSQP', jac=lambda X, *args: model_function_jac(X, *args), bounds=bounds, constraints=constraints, options=options, callback=print_optimization_progress)
     
     if res.success:
         _, linpreds, svrpreds = ProfitFunc_all(res.x, data)
@@ -101,7 +140,7 @@ def findMaxima(data, penetration_min, penetration_max, dmrate_min, dmrate_max):
             "Penetration": res.x[0],
             "DMRate": res.x[1],
             "LR_prediction": np.round(linpreds, 2),
-            "Enesembling_prediction": np.round(svrpreds, 2),
+            "Ensembling_prediction": np.round(svrpreds, 2),
             "message": res.message
         }
     else:
@@ -109,6 +148,7 @@ def findMaxima(data, penetration_min, penetration_max, dmrate_min, dmrate_max):
             "success": res.success,
             "message": res.message
         }
+
 
 # Streamlit app
 def main():
@@ -207,16 +247,24 @@ def main():
             # Display table with all combinations
             st.write("Table showing all combinations with predictions and profit:")
             st.write(df)
+            data=pd.DataFrame()
+         
+            data['SeasonalIndicator_ts'] = [seasonal_indicator]
+            data['Christmas'] = [christmas]
+            data['GMRate'] = [gm_rate]
+            data['EconomicIndicator'] = [economic_indicator]
 
-            results_list = []
-            for i in range(df.shape[0]):
-                result = findMaxima(df.iloc[i:i + 1].copy(), penetration_min, penetration_max, dmrate_min, dmrate_max)
-                results_list.append(result)
+            # Append necessary columns with initial guesses
+            data['Penetration'] = [penetration_min]
+            data['DMRate'] = [dmrate_min]
+            
+
+            results_list = findMaxima(data.copy(), penetration_min, penetration_max, dmrate_min, dmrate_max)
+                
 
             # Convert results to a DataFrame
             results_df = pd.DataFrame(results_list)
             st.write("Optimal Penetration and DMRate:")
-           
             results_df = results_df.applymap(lambda x: x[0] if isinstance(x, list) else x)
             st.write(results_df.iloc[[0]])
             optimal_point = results_df.iloc[0]
@@ -249,6 +297,19 @@ def main():
                         xaxis_title='DMRate',
                         yaxis_title='Estimated Profit'
                     )
+
+                    fig.add_trace(go.Scatter(
+                    # x=[optimal_point['Penetration']],
+                    x=[optimal_point['DMRate']],
+                    y=[optimal_point['Estimated_Profit']],
+                    mode='markers',
+                    marker=dict(
+                        size=10,
+                        color='red',
+                        symbol='circle'
+                    ),
+                    name='Optimal Point'
+                ))
                 elif dmrate_min == dmrate_max:
                     fig = go.Figure(data=go.Scatter(
                         x=df['Penetration'],
@@ -261,6 +322,19 @@ def main():
                             opacity=0.8
                         )
                     ))
+
+                    fig.add_trace(go.Scatter(
+                    x=[optimal_point['Penetration']],
+                    # y=[optimal_point['DMRate']],
+                    y=[optimal_point['Estimated_Profit']],
+                    mode='markers',
+                    marker=dict(
+                        size=10,
+                        color='red',
+                        symbol='circle'
+                    ),
+                    name='Optimal Point'
+                ))
                     fig.update_layout(
                         title='2D Plot of Estimated Profit vs Penetration',
                         xaxis_title='Penetration',
